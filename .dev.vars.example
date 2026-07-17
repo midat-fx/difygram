@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local `npm run dev` (never commit .dev.vars)
+TELEGRAM_BOT_TOKEN=123456:ABC-your-botfather-token
+WEBHOOK_SECRET=change-me-long-random-string
+DIFY_API_KEY=app-your-dify-key
+# For BACKEND_MODE=generic:
+# GENERIC_WEBHOOK_URL=https://your-n8n.example.com/webhook/abc
+# GENERIC_AUTH_HEADER=Bearer xyz

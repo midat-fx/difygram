@@ -1,0 +1,19 @@
+{
+  "name": "difygram",
+  "version": "0.1.0",
+  "description": "Stream any Dify / n8n / HTTP AI agent into Telegram — ChatGPT-style live typing, on a free Cloudflare Worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260714.1",
+    "typescript": "^5.5.4",
+    "vitest": "^3.0.0",
+    "wrangler": "^4.0.0"
+  }
+}
