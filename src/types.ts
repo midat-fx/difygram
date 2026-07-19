@@ -18,6 +18,7 @@ export interface Env {
 
 export interface TgUser {
   id: number;
+  is_bot?: boolean;
   first_name?: string;
   username?: string;
 }
@@ -27,14 +28,41 @@ export interface TgChat {
   type: string;
 }
 
+export interface TgPhotoSize {
+  file_id: string;
+  file_size?: number;
+  width?: number;
+  height?: number;
+}
+
+export interface TgVoice {
+  file_id: string;
+  duration: number;
+  file_size?: number;
+}
+
 export interface TgMessage {
   message_id: number;
   chat: TgChat;
   from?: TgUser;
   text?: string;
+  caption?: string;
+  photo?: TgPhotoSize[];
+  voice?: TgVoice;
+  document?: { file_id: string };
+  message_thread_id?: number;
+  reply_to_message?: TgMessage;
+}
+
+export interface TgCallbackQuery {
+  id: string;
+  from: TgUser;
+  message?: TgMessage;
+  data?: string;
 }
 
 export interface TgUpdate {
   update_id: number;
   message?: TgMessage;
+  callback_query?: TgCallbackQuery;
 }

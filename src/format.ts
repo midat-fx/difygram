@@ -27,7 +27,11 @@ export function markdownToTelegramHtml(md: string): string {
 
   text = escapeHtml(text);
 
-  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
+  // A quote inside the URL would close href="" early and break the whole message.
+  text = text.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    (_m, label: string, href: string) => `<a href="${href.replace(/"/g, "&quot;")}">${label}</a>`,
+  );
   text = text.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
   text = text.replace(/(?<=^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/gm, "<i>$1</i>");
   text = text.replace(/(?<=^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/gm, "<i>$1</i>");

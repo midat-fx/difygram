@@ -32,6 +32,11 @@ describe("markdownToTelegramHtml", () => {
     expect(markdownToTelegramHtml("```\n**not bold**\n```")).toBe("<pre><code>**not bold**</code></pre>");
   });
 
+  it("escapes quotes inside a link URL so href never closes early", () => {
+    const out = markdownToTelegramHtml('[click](https://x.dev/a"onmouseover="x)');
+    expect(out).toBe('<a href="https://x.dev/a&quot;onmouseover=&quot;x">click</a>');
+  });
+
   it("converts links and headings", () => {
     expect(markdownToTelegramHtml("## Title\n[site](https://x.dev)")).toBe(
       '<b>Title</b>\n<a href="https://x.dev">site</a>',
