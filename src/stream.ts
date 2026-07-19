@@ -31,6 +31,11 @@ export class StreamingReply {
     private readonly minIntervalMs = 1100,
   ) {}
 
+  /** Text accumulated so far — used to append citations before finalizing. */
+  get text(): string {
+    return this.full;
+  }
+
   /** Once known, every preview edit carries a Stop button for this generation. */
   setTaskId(taskId: string): void {
     this.taskId = taskId;

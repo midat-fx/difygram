@@ -1,4 +1,5 @@
-import { DifyError, streamDifyChat } from "./dify";
+import { answerKeyboard, parseCallback, starterKeyboard, votedKeyboard, type InlineKeyboard } from "./buttons";
+import { DifyClient, DifyError, streamDifyChat, type DifyAppParameters } from "./dify";
 import { errorToUserText } from "./errors";
 import { callGeneric } from "./generic";
 import { acquireLock, releaseLock } from "./lock";
@@ -6,7 +7,7 @@ import { redactSecrets } from "./redact";
 import { clearConversation, getConversation, saveConversation } from "./session";
 import { StreamingReply } from "./stream";
 import { Telegram } from "./telegram";
-import type { Env, TgMessage, TgUpdate } from "./types";
+import type { Env, TgCallbackQuery, TgMessage, TgUpdate } from "./types";
 
 const START_TEXT = [
   "Hi! I relay your messages to an AI agent and stream its answer back in real time.",
@@ -22,20 +23,42 @@ const HELP_TEXT = [
   "/help — this message",
 ].join("\n");
 
-const BUSY_TEXT = "⏳ Still answering your previous message — please wait.";
+const BUSY_TEXT = "⏳ Still answering your previous message — wait or press ⏹ Stop.";
 
 /** Bot username, resolved once per isolate; used to tell our /commands from other bots'. */
 let botUsername: string | null = null;
+/** App parameters, cached per isolate — Dify does not change them mid-flight. */
+let cachedParams: { at: number; value: DifyAppParameters } | null = null;
+const PARAMS_TTL_MS = 10 * 60 * 1000;
 
 async function getBotUsername(tg: Telegram): Promise<string | null> {
   if (botUsername !== null) return botUsername;
   try {
-    const me = await tg.getMe();
-    botUsername = me.username ?? "";
+    botUsername = (await tg.getMe()).username ?? "";
   } catch {
     botUsername = "";
   }
   return botUsername;
+}
+
+function difyClient(env: Env): DifyClient {
+  return new DifyClient({
+    apiUrl: env.DIFY_API_URL ?? "https://api.dify.ai/v1",
+    apiKey: env.DIFY_API_KEY as string,
+  });
+}
+
+async function getParams(env: Env): Promise<DifyAppParameters> {
+  const now = Date.now();
+  if (cachedParams && now - cachedParams.at < PARAMS_TTL_MS) return cachedParams.value;
+  try {
+    const value = await difyClient(env).parameters();
+    cachedParams = { at: now, value };
+    return value;
+  } catch (e) {
+    console.warn("parameters fetch failed:", redactSecrets(e));
+    return cachedParams?.value ?? {};
+  }
 }
 
 export default {
@@ -98,9 +121,8 @@ async function seenBefore(updateId: number): Promise<boolean> {
 }
 
 async function route(env: Env, update: TgUpdate): Promise<void> {
-  const message = update.message;
-  if (!message?.chat) return;
-  await handleMessage(env, message);
+  if (update.callback_query) return handleCallback(env, update.callback_query);
+  if (update.message?.chat) return handleMessage(env, update.message);
 }
 
 /** Matches /cmd and /cmd@thisbot, but not /cmd@someotherbot. */
@@ -130,7 +152,7 @@ async function handleMessage(env: Env, message: TgMessage): Promise<void> {
   if (text.startsWith("/")) {
     const cmd = parseCommand(text, isPrivate, await getBotUsername(tg));
     if (cmd === "start") {
-      await tg.sendMessage(chatId, START_TEXT);
+      await sendStart(env, tg, chatId);
       return;
     }
     if (cmd === "help") {
@@ -150,9 +172,28 @@ async function handleMessage(env: Env, message: TgMessage): Promise<void> {
       }
       return;
     }
-    if (cmd === null && text.match(/^\/\w+(@\w+)?$/)) return; // command for another bot
+    if (cmd === null && /^\/\w+(@\w+)?$/.test(text)) return; // command for another bot
   }
 
+  await runLocked(env, tg, chatId, text);
+}
+
+/** Greeting: the app's own opening statement when it has one. */
+async function sendStart(env: Env, tg: Telegram, chatId: number): Promise<void> {
+  if ((env.BACKEND_MODE ?? "dify") === "dify" && env.DIFY_API_KEY) {
+    const params = await getParams(env);
+    const opening = params.opening_statement?.trim();
+    if (opening) {
+      await tg.sendMessage(chatId, opening, {
+        reply_markup: starterKeyboard(params.suggested_questions ?? []),
+      });
+      return;
+    }
+  }
+  await tg.sendMessage(chatId, START_TEXT);
+}
+
+async function runLocked(env: Env, tg: Telegram, chatId: number, text: string): Promise<void> {
   if (!(await acquireLock(chatId))) {
     await tg.sendMessage(chatId, BUSY_TEXT);
     return;
@@ -161,6 +202,67 @@ async function handleMessage(env: Env, message: TgMessage): Promise<void> {
     await generate(env, tg, chatId, text);
   } finally {
     await releaseLock(chatId);
+  }
+}
+
+async function handleCallback(env: Env, query: TgCallbackQuery): Promise<void> {
+  const tg = new Telegram(env.TELEGRAM_BOT_TOKEN);
+  const cb = parseCallback(query.data);
+  const chatId = query.message?.chat.id;
+  const user = `tg-${chatId}`;
+
+  if (!cb || !chatId) {
+    await tg.answerCallbackQuery(query.id).catch(() => {});
+    return;
+  }
+
+  try {
+    switch (cb.kind) {
+      case "feedback-noop":
+        await tg.answerCallbackQuery(query.id);
+        return;
+
+      case "stop": {
+        // Deliberately outside the generation lock: the whole point is to
+        // interrupt the run that currently holds it.
+        await tg.answerCallbackQuery(query.id, "Stopped");
+        await difyClient(env).stop(cb.taskId, user);
+        return;
+      }
+
+      case "feedback": {
+        await tg.answerCallbackQuery(query.id, "Thanks for the feedback!");
+        await difyClient(env).feedback(cb.messageId, cb.rating, user);
+        if (query.message) {
+          const previous = (query.message as { reply_markup?: InlineKeyboard }).reply_markup;
+          await tg.editReplyMarkup(chatId, query.message.message_id, votedKeyboard(previous, cb.rating));
+        }
+        return;
+      }
+
+      case "suggestion": {
+        await tg.answerCallbackQuery(query.id);
+        const questions = await difyClient(env).suggested(cb.messageId, user);
+        const question = questions[cb.index];
+        if (!question) return;
+        await tg.sendMessage(chatId, question);
+        await runLocked(env, tg, chatId, question);
+        return;
+      }
+
+      case "starter": {
+        await tg.answerCallbackQuery(query.id);
+        const params = await getParams(env);
+        const question = (params.suggested_questions ?? [])[cb.index];
+        if (!question) return;
+        await tg.sendMessage(chatId, question);
+        await runLocked(env, tg, chatId, question);
+        return;
+      }
+    }
+  } catch (e) {
+    console.error("callback failed:", redactSecrets(e));
+    await tg.answerCallbackQuery(query.id).catch(() => {});
   }
 }
 
@@ -190,6 +292,9 @@ async function generate(env: Env, tg: Telegram, chatId: number, text: string): P
     if (!env.DIFY_API_KEY) throw new Error("DIFY_API_KEY is not configured");
     const previous = await getConversation(env.SESSIONS, chatId);
     let conversationId: string | undefined;
+    let messageId = "";
+    let sources: string[] = [];
+    const images: string[] = [];
 
     const run = async (cid: string | null) => {
       for await (const chunk of streamDifyChat({
@@ -200,6 +305,12 @@ async function generate(env: Env, tg: Telegram, chatId: number, text: string): P
         conversationId: cid,
       })) {
         if (chunk.conversationId) conversationId = chunk.conversationId;
+        if (chunk.messageId) messageId = chunk.messageId;
+        if (chunk.taskId) reply.setTaskId(chunk.taskId);
+        if (chunk.sources) sources = chunk.sources;
+        if (chunk.fileUrl) images.push(chunk.fileUrl);
+        if (chunk.replaceText !== undefined) reply.replace(chunk.replaceText);
+        if (chunk.status) await reply.setStatus(chunk.status);
         if (chunk.text) await reply.append(chunk.text);
       }
     };
@@ -216,11 +327,47 @@ async function generate(env: Env, tg: Telegram, chatId: number, text: string): P
       }
     }
 
-    await reply.finalize();
+    const citations = env.CITATIONS === "off" ? "" : formatSources(sources);
+    const keyboard = messageId ? answerKeyboard(messageId, await followUps(env, messageId, chatId)) : undefined;
+    await reply.finalize(citations ? `${reply.text}${citations}` : undefined, keyboard);
     await saveConversation(env.SESSIONS, chatId, conversationId, previous);
+    if (images.length) await sendImages(tg, chatId, images, env);
   } catch (e) {
     console.error("reply failed:", redactSecrets(e));
     await reply.fail(errorToUserText(e));
+  }
+}
+
+export function formatSources(sources: string[]): string {
+  const unique = [...new Set(sources)].slice(0, 3);
+  return unique.length ? `\n\n📚 Sources: ${unique.join(", ")}` : "";
+}
+
+/** Follow-up suggestions are a bonus: a failure here must not cost the answer. */
+async function followUps(env: Env, messageId: string, chatId: number): Promise<string[]> {
+  const params = await getParams(env);
+  if (!params.suggested_questions_after_answer?.enabled) return [];
+  try {
+    return await difyClient(env).suggested(messageId, `tg-${chatId}`);
+  } catch (e) {
+    console.warn("suggested fetch failed:", redactSecrets(e));
+    return [];
+  }
+}
+
+async function sendImages(tg: Telegram, chatId: number, urls: string[], env: Env): Promise<void> {
+  const origin = new URL(env.DIFY_API_URL ?? "https://api.dify.ai/v1").origin;
+  for (const url of urls.slice(0, 5)) {
+    try {
+      // Absolute-ise relative URLs, then pass the bytes through: Dify's signed
+      // links are fussy and a self-hosted instance is invisible to Telegram.
+      const absolute = url.startsWith("http") ? url : `${origin}${url}`;
+      const res = await fetch(absolute, { headers: { authorization: `Bearer ${env.DIFY_API_KEY}` } });
+      if (!res.ok) continue;
+      await tg.sendPhoto(chatId, await res.arrayBuffer());
+    } catch (e) {
+      console.warn("image forward failed:", redactSecrets(e));
+    }
   }
 }
 
@@ -249,7 +396,17 @@ async function handleSetup(request: Request, env: Env): Promise<Response> {
   const tg = new Telegram(env.TELEGRAM_BOT_TOKEN);
   try {
     await tg.setWebhook(`${url.origin}/webhook`, env.WEBHOOK_SECRET);
-    return Response.json({ ok: true, webhook: `${url.origin}/webhook`, next: "Message your bot on Telegram" });
+    // Validating the key here catches the most common onboarding mistake.
+    let app: string | undefined;
+    if ((env.BACKEND_MODE ?? "dify") === "dify" && env.DIFY_API_KEY) {
+      app = (await difyClient(env).info().catch(() => ({}) as { name?: string })).name;
+    }
+    return Response.json({
+      ok: true,
+      webhook: `${url.origin}/webhook`,
+      ...(app ? { dify_app: app } : {}),
+      next: "Message your bot on Telegram",
+    });
   } catch (e) {
     return Response.json({ ok: false, error: redactSecrets(e) }, { status: 502 });
   }

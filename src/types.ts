@@ -14,6 +14,8 @@ export interface Env {
   GENERIC_WEBHOOK_URL?: string;
   /** Optional Authorization header value for the generic backend, e.g. "Bearer xyz". Secret. */
   GENERIC_AUTH_HEADER?: string;
+  /** "on" (default) or "off" — append 📚 Sources from Dify's retriever metadata. */
+  CITATIONS?: string;
 }
 
 export interface TgUser {
