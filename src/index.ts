@@ -7,6 +7,7 @@ import { callGeneric } from "./generic";
 import { acquireLock, releaseLock } from "./lock";
 import { redactSecrets } from "./redact";
 import { clearConversation, getConversation, saveConversation } from "./session";
+import { recallSuggestions, rememberSuggestions } from "./suggestions";
 import { CURSOR, StreamingReply } from "./stream";
 import { Telegram } from "./telegram";
 import type { Env, TgCallbackQuery, TgMessage, TgUpdate } from "./types";
@@ -243,6 +244,15 @@ async function handlePhoto(env: Env, tg: Telegram, message: TgMessage): Promise<
     return;
   }
 
+  // Dify accepts the upload even when the app has image input switched off — it
+  // just never shows the file to the model, and the answer becomes "what image?".
+  // Ask the app first and say something useful instead of burning a model call.
+  const params = await getParams(env);
+  if (params.file_upload?.image?.enabled === false) {
+    await tg.sendMessage(chatId, TEXTS.photoNotEnabled);
+    return;
+  }
+
   if (!(await acquireLock(chatId))) {
     await tg.sendMessage(chatId, BUSY_TEXT);
     return;
@@ -340,7 +350,11 @@ async function handleCallback(env: Env, query: TgCallbackQuery): Promise<void> {
 
       case "suggestion": {
         await tg.answerCallbackQuery(query.id);
-        const questions = await difyClient(env).suggested(cb.messageId, user);
+        // Read back the exact list the buttons were built from: Dify would
+        // generate a different set on a second call, and index N would then
+        // point at a question the user never saw.
+        const cached = await recallSuggestions(cb.messageId);
+        const questions = cached ?? (await difyClient(env).suggested(cb.messageId, user));
         const question = questions[cb.index];
         if (!question) return;
         await tg.sendMessage(chatId, question);
@@ -433,7 +447,9 @@ async function generate(
     }
 
     const citations = env.CITATIONS === "off" ? "" : formatSources(sources);
-    const keyboard = messageId ? answerKeyboard(messageId, await followUps(env, messageId, chatId)) : undefined;
+    const suggestions = messageId ? await followUps(env, messageId, chatId) : [];
+    if (messageId && suggestions.length) await rememberSuggestions(messageId, suggestions);
+    const keyboard = messageId ? answerKeyboard(messageId, suggestions) : undefined;
     await reply.finalize(citations ? `${reply.text}${citations}` : undefined, keyboard);
     await saveConversation(env.SESSIONS, chatId, conversationId, previous);
     if (images.length) await sendImages(tg, chatId, images, env);
