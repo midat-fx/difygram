@@ -16,6 +16,10 @@ export interface Env {
   GENERIC_AUTH_HEADER?: string;
   /** "on" (default) or "off" — append 📚 Sources from Dify's retriever metadata. */
   CITATIONS?: string;
+  /** "auto" (default) or "off" — transcribe voice notes with Workers AI. */
+  VOICE_MODE?: string;
+  /** Workers AI binding; present only when the deployment enables voice. */
+  AI?: { run(model: string, input: Record<string, unknown>): Promise<{ text?: string }> };
 }
 
 export interface TgUser {

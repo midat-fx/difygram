@@ -1,6 +1,7 @@
 import { answerKeyboard, parseCallback, starterKeyboard, votedKeyboard, type InlineKeyboard } from "./buttons";
 import { DifyClient, DifyError, streamDifyChat, type DifyAppParameters } from "./dify";
 import { errorToUserText } from "./errors";
+import { checkPhoto, checkVoice, largestPhoto, TEXTS, transcribe } from "./media";
 import { markdownToTelegramHtml } from "./format";
 import { callGeneric } from "./generic";
 import { acquireLock, releaseLock } from "./lock";
@@ -142,8 +143,11 @@ async function handleMessage(env: Env, message: TgMessage): Promise<void> {
   const tg = new Telegram(env.TELEGRAM_BOT_TOKEN);
   const chatId = message.chat.id;
   const isPrivate = message.chat.type === "private";
-  const text = message.text?.trim();
 
+  if (message.voice) return handleVoice(env, tg, message);
+  if (message.photo) return handlePhoto(env, tg, message);
+
+  const text = message.text?.trim();
   if (!text) {
     // In groups every join/pin/photo would otherwise get a reply — that's spam.
     if (isPrivate) await tg.sendMessage(chatId, "I can only read text messages for now.");
@@ -177,6 +181,88 @@ async function handleMessage(env: Env, message: TgMessage): Promise<void> {
   }
 
   await runLocked(env, tg, chatId, text);
+}
+
+/** Voice notes: transcribe at the edge, then walk the normal text path. */
+async function handleVoice(env: Env, tg: Telegram, message: TgMessage): Promise<void> {
+  const chatId = message.chat.id;
+  const voiceEnabled = (env.VOICE_MODE ?? "auto") !== "off" && Boolean(env.AI);
+  const check = checkVoice(message, voiceEnabled);
+  if (!check.ok) {
+    await tg.sendMessage(chatId, TEXTS[check.reason]);
+    return;
+  }
+
+  if (!(await acquireLock(chatId))) {
+    await tg.sendMessage(chatId, BUSY_TEXT);
+    return;
+  }
+  let transcript = "";
+  try {
+    await tg.sendChatAction(chatId).catch(() => {});
+    const file = await tg.getFile(message.voice!.file_id);
+    if (!file.file_path) throw new Error("no file_path");
+    transcript = await transcribe(env.AI!, await tg.downloadFile(file.file_path));
+  } catch (e) {
+    console.warn("transcription failed:", redactSecrets(e));
+    await releaseLock(chatId);
+    await tg.sendMessage(chatId, TEXTS.voiceUnavailable);
+    return;
+  }
+
+  if (!transcript) {
+    await releaseLock(chatId);
+    await tg.sendMessage(chatId, TEXTS.voiceEmpty);
+    return;
+  }
+
+  try {
+    // Showing what was heard makes a wrong transcription obvious instead of baffling.
+    await tg.sendMessage(chatId, `🎙 “${transcript}”`);
+    await generate(env, tg, chatId, transcript);
+  } finally {
+    await releaseLock(chatId);
+  }
+}
+
+/** Photos go to Dify as uploaded files; the caption becomes the question. */
+async function handlePhoto(env: Env, tg: Telegram, message: TgMessage): Promise<void> {
+  const chatId = message.chat.id;
+  const isPrivate = message.chat.type === "private";
+  const photo = largestPhoto(message.photo);
+  if (!photo) return;
+
+  if ((env.BACKEND_MODE ?? "dify") !== "dify" || !env.DIFY_API_KEY) {
+    if (isPrivate) await tg.sendMessage(chatId, "I can only read text messages for now.");
+    return;
+  }
+
+  const check = checkPhoto(photo);
+  if (!check.ok) {
+    await tg.sendMessage(chatId, TEXTS[check.reason]);
+    return;
+  }
+
+  if (!(await acquireLock(chatId))) {
+    await tg.sendMessage(chatId, BUSY_TEXT);
+    return;
+  }
+  try {
+    await tg.sendChatAction(chatId).catch(() => {});
+    const file = await tg.getFile(photo.file_id);
+    if (!file.file_path) throw new Error("no file_path");
+    // Bytes are passed through rather than handing Dify a Telegram file URL:
+    // that URL embeds the bot token and would end up in someone else's storage.
+    const bytes = await tg.downloadFile(file.file_path);
+    const fileId = await difyClient(env).uploadImage(bytes, `tg-${chatId}`);
+    await generate(env, tg, chatId, message.caption?.trim() || "What's in this image?", [fileId]);
+  } catch (e) {
+    console.error("photo handling failed:", redactSecrets(e));
+    const isUploadRejection = e instanceof DifyError && (e.status === 400 || e.status === 403);
+    await tg.sendMessage(chatId, isUploadRejection ? TEXTS.photoNotEnabled : errorToUserText(e));
+  } finally {
+    await releaseLock(chatId);
+  }
 }
 
 /** Greeting: the app's own opening statement when it has one. */
@@ -278,7 +364,13 @@ async function handleCallback(env: Env, query: TgCallbackQuery): Promise<void> {
   }
 }
 
-async function generate(env: Env, tg: Telegram, chatId: number, text: string): Promise<void> {
+async function generate(
+  env: Env,
+  tg: Telegram,
+  chatId: number,
+  text: string,
+  fileIds: string[] = [],
+): Promise<void> {
   const mode = env.BACKEND_MODE ?? "dify";
   if (mode !== "dify" && mode !== "generic") {
     await tg.sendMessage(chatId, `⚙️ BACKEND_MODE="${mode}" is not supported. Use "dify" or "generic".`);
@@ -315,6 +407,7 @@ async function generate(env: Env, tg: Telegram, chatId: number, text: string): P
         query: text,
         user: `tg-${chatId}`,
         conversationId: cid,
+        ...(fileIds.length ? { fileIds } : {}),
       })) {
         if (chunk.conversationId) conversationId = chunk.conversationId;
         if (chunk.messageId) messageId = chunk.messageId;
