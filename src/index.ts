@@ -1,11 +1,12 @@
 import { answerKeyboard, parseCallback, starterKeyboard, votedKeyboard, type InlineKeyboard } from "./buttons";
 import { DifyClient, DifyError, streamDifyChat, type DifyAppParameters } from "./dify";
 import { errorToUserText } from "./errors";
+import { markdownToTelegramHtml } from "./format";
 import { callGeneric } from "./generic";
 import { acquireLock, releaseLock } from "./lock";
 import { redactSecrets } from "./redact";
 import { clearConversation, getConversation, saveConversation } from "./session";
-import { StreamingReply } from "./stream";
+import { CURSOR, StreamingReply } from "./stream";
 import { Telegram } from "./telegram";
 import type { Env, TgCallbackQuery, TgMessage, TgUpdate } from "./types";
 
@@ -227,6 +228,17 @@ async function handleCallback(env: Env, query: TgCallbackQuery): Promise<void> {
         // interrupt the run that currently holds it.
         await tg.answerCallbackQuery(query.id, "Stopped");
         await difyClient(env).stop(cb.taskId, user);
+        // Dify stops producing tokens but can hold the SSE connection open until
+        // it times out, and that isolate cannot be reached from here. So this
+        // handler finishes the message itself: the text Telegram just handed us
+        // is exactly what the user sees.
+        const partial = (query.message?.text ?? "").replace(CURSOR.trim(), "").trimEnd();
+        if (query.message && partial) {
+          await tg.editFinal(chatId, query.message.message_id, markdownToTelegramHtml(partial), partial);
+        }
+        // Free the chat immediately instead of making the user wait out the
+        // stranded stream's lock.
+        await releaseLock(chatId);
         return;
       }
 

@@ -1,7 +1,7 @@
 import { markdownToTelegramHtml, splitMessage, TG_SAFE_LIMIT } from "./format";
 import type { Telegram } from "./telegram";
 
-const CURSOR = " ▍";
+export const CURSOR = " ▍";
 /** Telegram allows roughly one message per second per chat. */
 const SEGMENT_PAUSE_MS = 1100;
 
