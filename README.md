@@ -5,6 +5,9 @@
 [![CI](https://github.com/midat-fx/difygram/actions/workflows/ci.yml/badge.svg)](https://github.com/midat-fx/difygram/actions/workflows/ci.yml)
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/midat-fx/difygram)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Live demo](https://img.shields.io/badge/live_demo-@difygram__demo__bot-FFB224)](https://t.me/difygram_demo_bot)
+
+**Landing:** https://difygram.faizov-midat.workers.dev · **Try it:** [@difygram_demo_bot](https://t.me/difygram_demo_bot)
 
 <!-- demo.gif: streaming answer growing inside a Telegram message -->
 
@@ -19,16 +22,26 @@ Dify gives you a great agent builder, but its Telegram story is "write your own 
 - silently drop answers longer than 4096 characters,
 - forget the conversation on every message.
 
-DifyGram handles all four, in ~500 lines of typed, tested Worker code.
+DifyGram handles all four, in ~1,700 lines of typed, tested Worker code.
 
 ## Features
 
 - **Live streaming** — Dify's SSE stream rendered into one growing message, throttled to respect Telegram rate limits (with `retry_after` back-off).
+- **Stop button** — cancel a generation mid-stream; the partial answer is kept and formatted, not thrown away.
+- **Thumbs up/down** — one tap files end-user feedback straight into Dify's Logs & Annotations.
+- **Suggested follow-ups** — Dify's next-question suggestions become tappable rows under the answer.
+- **Voice notes** — transcribed at the edge by Workers AI Whisper, then answered by your app; the transcript is echoed so a misheard question is obvious.
+- **Photos** — sent to vision-capable apps as real uploads (the caption becomes the question).
+- **Image replies** — pictures produced by your app arrive as Telegram photos.
+- **Live agent status** — `🔧 web_search…` while an agent or chatflow runs its tools.
+- **RAG citations** — `📚 Sources:` appended from Dify's retriever metadata (`CITATIONS=off` opts out).
+- **Opening statement** — `/start` greets with your app's own message and starter questions.
 - **Conversation memory** — `chat_id → conversation_id` stored in Workers KV; `/reset` starts over. Stale ids (deleted on the Dify side) are detected and retried fresh.
 - **Safe formatting** — markdown converted to Telegram HTML (not MarkdownV2), with plain-text fallback if Telegram rejects the markup. Code blocks survive intact.
-- **Long answers** — split on paragraph boundaries and delivered fully, never truncated.
+- **Long answers** — split on paragraph boundaries, paced to stay under Telegram's rate limit, never truncated.
+- **Group-friendly** — answers `/cmd@thisbot`, ignores commands aimed at other bots, stays quiet on service messages, never loops with another bot.
 - **Any backend** — `BACKEND_MODE=generic` POSTs to any HTTP endpoint and understands common reply shapes (`{"reply"}`, `{"output"}`, n8n arrays, plain text).
-- **Boring reliability** — webhook secret check, update dedup, graceful error messages, 32 unit tests, zero runtime dependencies.
+- **Boring reliability** — webhook secret check, weak-secret refusal, update dedup, per-chat generation lock, bot-token redaction in logs, graceful error replies, 107 unit tests, zero runtime dependencies.
 
 ## 5-minute setup
 
@@ -99,6 +112,14 @@ DifyGram will POST:
 | `DIFY_API_KEY` | secret | dify mode | Dify app key (`app-...`) |
 | `GENERIC_WEBHOOK_URL` | secret | generic mode | your endpoint |
 | `GENERIC_AUTH_HEADER` | secret | no | sent as `Authorization` to the generic backend |
+| `CITATIONS` | var | no | `on` (default) or `off` — append `📚 Sources:` from Dify's retriever metadata |
+| `VOICE_MODE` | var | no | `auto` (default) transcribes voice notes via Workers AI, `off` replies with a short notice |
+
+Voice notes need the Workers AI binding (already in `wrangler.jsonc`): free tier covers ~3.5 h of audio per day, shared across the whole account. Notes are capped at 60 s / 2 MB, photos at 10 MB.
+
+**Multiple bots?** Deploy one Worker per bot — the Workers free plan allows up to 100 per account.
+
+**Groups:** replies and `/commands` work out of the box. For plain `@mention` triggers, disable privacy mode in BotFather (`/setprivacy` → Disable).
 
 ## How it works
 
@@ -123,20 +144,26 @@ sequenceDiagram
 
 ## Notes & limits
 
-- **Telegram edits** are throttled to ~1/s per chat; on `429` the Worker sleeps exactly `retry_after` and retries once.
+- **Telegram edits** are throttled to ~1/s per chat; on `429` the Worker sleeps exactly `retry_after` — previews retry once, final deliveries up to three times.
 - **KV free tier** allows 1,000 writes/day — DifyGram writes only when a conversation id *changes* (≈ one write per new conversation), so the free tier is plenty.
 - **Dedup** uses the per-colo Cache API (best effort): Telegram re-delivers updates when a webhook is slow; the Worker answers instantly and skips updates it has already seen.
 - **Dify sandbox** gives 200 one-time message credits — add your own model provider key (e.g. a free Gemini key) in Dify to keep the demo free forever.
+- **One generation at a time per chat**: a second message while the first is still streaming gets a polite "still answering" instead of forking the conversation.
+- **Buttons** need `callback_query` in the webhook's `allowed_updates`. Upgrading from v1? Open `/setup?secret=…` once more.
 - Everything runs comfortably inside Workers' free plan (streaming waits are I/O, not CPU time).
 
 ## Development
 
 ```sh
 npm run dev        # local worker
-npm test           # 32 unit tests (SSE parser, formatter, splitter, throttle)
+npm test           # 107 unit tests (SSE parsing, formatting, splitting, throttling, buttons, guards, locks)
 npm run typecheck
 ```
 
 ## License
 
-[MIT](LICENSE) © Midat Faizov
+[MIT](LICENSE) © Midat Faizov · available for Dify / Telegram-bot integration work — [get in touch](mailto:midat.faizov@gmail.com).
+
+---
+
+If DifyGram saved you an afternoon of Telegram API archaeology, a ⭐ helps other Dify/n8n folks find it.

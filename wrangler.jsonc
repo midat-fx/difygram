@@ -6,6 +6,9 @@
   // Created automatically by the "Deploy to Cloudflare" button.
   // Manual setup: `wrangler kv namespace create SESSIONS` and paste the id here.
   "kv_namespaces": [{ "binding": "SESSIONS", "id": "15a663ea7f5e4f829e9e877c0ff09442" }],
+  // Landing page. Static Assets answer GET / and /favicon.svg before the Worker
+  // runs; POST /webhook and GET /setup have no matching file and fall through.
+  "assets": { "directory": "./public" },
   // Platform binding, not an npm package — voice notes are transcribed at the
   // edge by Workers AI. Remove it (or set VOICE_MODE=off) to disable voice.
   "ai": { "binding": "AI" },
