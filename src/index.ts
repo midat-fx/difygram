@@ -28,6 +28,15 @@ const HELP_TEXT = [
 
 const BUSY_TEXT = "⏳ Still answering your previous message — wait or press ⏹ Stop.";
 
+// Persistent bottom-of-chat button; tapping it sends this exact text, which we
+// route to /reset. Coexists with the inline answer buttons (separate layer).
+const NEW_CHAT_BUTTON = "🆕 New chat";
+const MENU_KEYBOARD = {
+  keyboard: [[{ text: NEW_CHAT_BUTTON }]],
+  resize_keyboard: true,
+  is_persistent: true,
+};
+
 /** Bot username, resolved once per isolate; used to tell our /commands from other bots'. */
 let botUsername: string | null = null;
 /** App parameters, cached per isolate — Dify does not change them mid-flight. */
@@ -155,6 +164,8 @@ async function handleMessage(env: Env, message: TgMessage): Promise<void> {
     return;
   }
 
+  if (text === NEW_CHAT_BUTTON) return doReset(env, tg, chatId);
+
   if (text.startsWith("/")) {
     const cmd = parseCommand(text, isPrivate, await getBotUsername(tg));
     if (cmd === "start") {
@@ -165,23 +176,24 @@ async function handleMessage(env: Env, message: TgMessage): Promise<void> {
       await tg.sendMessage(chatId, HELP_TEXT);
       return;
     }
-    if (cmd === "reset") {
-      if (!(await acquireLock(chatId))) {
-        await tg.sendMessage(chatId, BUSY_TEXT);
-        return;
-      }
-      try {
-        await clearConversation(env.SESSIONS, chatId);
-        await tg.sendMessage(chatId, "🔄 Conversation reset — the next message starts from scratch.");
-      } finally {
-        await releaseLock(chatId);
-      }
-      return;
-    }
+    if (cmd === "reset") return doReset(env, tg, chatId);
     if (cmd === null && /^\/\w+(@\w+)?$/.test(text)) return; // command for another bot
   }
 
   await runLocked(env, tg, chatId, text);
+}
+
+async function doReset(env: Env, tg: Telegram, chatId: number): Promise<void> {
+  if (!(await acquireLock(chatId))) {
+    await tg.sendMessage(chatId, BUSY_TEXT);
+    return;
+  }
+  try {
+    await clearConversation(env.SESSIONS, chatId);
+    await tg.sendMessage(chatId, "🔄 New chat — the next message starts fresh.", { reply_markup: MENU_KEYBOARD });
+  } finally {
+    await releaseLock(chatId);
+  }
 }
 
 /** Voice notes: transcribe at the edge, then walk the normal text path. */
@@ -287,7 +299,10 @@ async function sendStart(env: Env, tg: Telegram, chatId: number): Promise<void> 
       return;
     }
   }
-  await tg.sendMessage(chatId, START_TEXT);
+  // Plain greeting (never edited) is a safe place to set the persistent
+  // New-chat button; the opening-statement branch above uses inline starters
+  // instead, and the button then shows on the first /reset.
+  await tg.sendMessage(chatId, START_TEXT, { reply_markup: MENU_KEYBOARD });
 }
 
 async function runLocked(env: Env, tg: Telegram, chatId: number, text: string): Promise<void> {
@@ -392,6 +407,8 @@ async function generate(
   }
 
   await tg.sendChatAction(chatId).catch(() => {});
+  // No reply keyboard here: a message carrying one can't be edited afterwards,
+  // and this placeholder is exactly the message the stream edits.
   const placeholder = await tg.sendMessage(chatId, "💭 …");
   const reply = new StreamingReply(tg, chatId, placeholder.message_id);
 

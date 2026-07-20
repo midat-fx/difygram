@@ -6,7 +6,9 @@ import { DifyError } from "./dify";
  */
 export function errorToUserText(e: unknown): string {
   if (e instanceof DifyError) {
-    if (/provider_quota_exceeded|quota/i.test(e.message)) {
+    // "Model is not configured" is what Dify returns once the sandbox credits
+    // run out, so it lands here too — the fix is the same: bring your own key.
+    if (/provider_quota_exceeded|quota|credit|not configured/i.test(e.message)) {
       return (
         "🪫 The AI model behind this bot is out of free credits. " +
         "Bot owner: open Dify → Settings → Model Provider and add your own free Gemini API key — " +

@@ -10,6 +10,11 @@ describe("errorToUserText", () => {
     expect(text).toContain("Model Provider");
   });
 
+  it("treats exhausted sandbox credits (Model is not configured) as a credits problem", () => {
+    const text = errorToUserText(new DifyError("Model is not configured", 400));
+    expect(text).toContain("out of free credits");
+  });
+
   it("reports a rejected Dify key", () => {
     expect(errorToUserText(new DifyError("unauthorized", 401))).toContain("DIFY_API_KEY");
   });
