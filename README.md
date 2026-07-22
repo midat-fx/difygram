@@ -41,7 +41,23 @@ DifyGram handles all four, in ~1,700 lines of typed, tested Worker code.
 - **Long answers** — split on paragraph boundaries, paced to stay under Telegram's rate limit, never truncated.
 - **Group-friendly** — answers `/cmd@thisbot`, ignores commands aimed at other bots, stays quiet on service messages, never loops with another bot.
 - **Any backend** — `BACKEND_MODE=generic` POSTs to any HTTP endpoint and understands common reply shapes (`{"reply"}`, `{"output"}`, n8n arrays, plain text).
-- **Boring reliability** — webhook secret check, weak-secret refusal, update dedup, per-chat generation lock, bot-token redaction in logs, graceful error replies, 107 unit tests, zero runtime dependencies.
+- **Boring reliability** — webhook secret check, weak-secret refusal, update dedup, per-chat generation lock, bot-token redaction in logs, graceful error replies, 108 unit tests, zero runtime dependencies.
+
+## How it compares
+
+| | **DifyGram** | LangBot / AstrBot | PlugBot | DIY Python scripts¹ | GPT-Telegram-Worker |
+|---|---|---|---|---|---|
+| ChatGPT-style streaming into one growing message | ✅ | varies by adapter | ✅ (toggle) | some | — |
+| Runs with **no server** on a free tier | ✅ Cloudflare free | — Docker + VPS | — Docker, Postgres, Redis | — a box running 24/7 | ✅ but needs external Redis |
+| Zero runtime dependencies | ✅ | — | — | — | — |
+| Dify **and** n8n / Flowise / any HTTP webhook | ✅ | via plugins | Dify only | Dify only | — direct model APIs only |
+| One-click deploy button | ✅ | — | — | — | ✅ |
+| Time to first reply | ~5 min | 30+ min | 20+ min | varies | ~15 min |
+| Unit-tested, typed, English docs | ✅ 108 tests | ✅ | partly | — | partly |
+
+¹ e.g. [CyanidEEEEE/dify-telegram_bot](https://github.com/CyanidEEEEE/dify-telegram_bot), [QIN2DIM/telegram-dify-bot](https://github.com/QIN2DIM/telegram-dify-bot) — fine scripts, but they need a machine that never sleeps.
+
+**Honest note:** if you need WeChat/QQ/Discord, plugins and a web UI — [LangBot](https://github.com/langbot-app/LangBot) and [AstrBot](https://github.com/AstrBotDevs/AstrBot) are excellent full platforms. DifyGram deliberately does one thing: your agent, in Telegram, streaming, in five minutes, for $0.
 
 ## 5-minute setup
 
@@ -114,6 +130,7 @@ DifyGram will POST:
 | `GENERIC_AUTH_HEADER` | secret | no | sent as `Authorization` to the generic backend |
 | `CITATIONS` | var | no | `on` (default) or `off` — append `📚 Sources:` from Dify's retriever metadata |
 | `VOICE_MODE` | var | no | `auto` (default) transcribes voice notes via Workers AI, `off` replies with a short notice |
+| `PROMO_FOOTER` | var | no | optional line appended to `/start` (e.g. a repo link); empty by default |
 
 Voice notes need the Workers AI binding (already in `wrangler.jsonc`): free tier covers ~3.5 h of audio per day, shared across the whole account. Notes are capped at 60 s / 2 MB, photos at 10 MB.
 
@@ -156,7 +173,7 @@ sequenceDiagram
 
 ```sh
 npm run dev        # local worker
-npm test           # 107 unit tests (SSE parsing, formatting, splitting, throttling, buttons, guards, locks)
+npm test           # 108 unit tests (SSE parsing, formatting, splitting, throttling, buttons, guards, locks)
 npm run typecheck
 ```
 

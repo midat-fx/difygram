@@ -20,7 +20,10 @@
     // "on" (default) appends 📚 Sources when the app returns retriever metadata.
     "CITATIONS": "on",
     // "auto" (default) transcribes voice notes; "off" replies with a short notice.
-    "VOICE_MODE": "auto"
+    "VOICE_MODE": "auto",
+    // Optional line appended to /start (the public demo links its repo here).
+    // Blank it ("") in your own deployment if you don't want a footer.
+    "PROMO_FOOTER": "⭐ Open source: github.com/midat-fx/difygram"
   },
   "observability": { "enabled": true }
 }

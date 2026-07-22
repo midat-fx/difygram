@@ -18,6 +18,8 @@ export interface Env {
   CITATIONS?: string;
   /** "auto" (default) or "off" — transcribe voice notes with Workers AI. */
   VOICE_MODE?: string;
+  /** Optional line appended to the /start greeting (e.g. a repo link). Empty by default. */
+  PROMO_FOOTER?: string;
   /** Workers AI binding; present only when the deployment enables voice. */
   AI?: { run(model: string, input: Record<string, unknown>): Promise<{ text?: string }> };
 }

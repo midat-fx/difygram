@@ -287,13 +287,19 @@ async function handlePhoto(env: Env, tg: Telegram, message: TgMessage): Promise<
   }
 }
 
+/** Append the optional promo line (e.g. a repo link) to a greeting; no-op when unset. */
+function withPromo(env: Env, text: string): string {
+  const footer = env.PROMO_FOOTER?.trim();
+  return footer ? `${text}\n\n${footer}` : text;
+}
+
 /** Greeting: the app's own opening statement when it has one. */
 async function sendStart(env: Env, tg: Telegram, chatId: number): Promise<void> {
   if ((env.BACKEND_MODE ?? "dify") === "dify" && env.DIFY_API_KEY) {
     const params = await getParams(env);
     const opening = params.opening_statement?.trim();
     if (opening) {
-      await tg.sendMessage(chatId, opening, {
+      await tg.sendMessage(chatId, withPromo(env, opening), {
         reply_markup: starterKeyboard(params.suggested_questions ?? []),
       });
       return;
@@ -302,7 +308,7 @@ async function sendStart(env: Env, tg: Telegram, chatId: number): Promise<void> 
   // Plain greeting (never edited) is a safe place to set the persistent
   // New-chat button; the opening-statement branch above uses inline starters
   // instead, and the button then shows on the first /reset.
-  await tg.sendMessage(chatId, START_TEXT, { reply_markup: MENU_KEYBOARD });
+  await tg.sendMessage(chatId, withPromo(env, START_TEXT), { reply_markup: MENU_KEYBOARD });
 }
 
 async function runLocked(env: Env, tg: Telegram, chatId: number, text: string): Promise<void> {
