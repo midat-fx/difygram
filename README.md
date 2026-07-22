@@ -9,7 +9,9 @@
 
 **Landing:** https://difygram.faizov-midat.workers.dev · **Try it:** [@difygram_demo_bot](https://t.me/difygram_demo_bot)
 
-<!-- demo.gif: streaming answer growing inside a Telegram message -->
+<p align="center">
+  <img src="assets/demo.gif" alt="DifyGram streaming a reply into a Telegram message, ChatGPT-style" width="360" />
+</p>
 
 The answer *types itself* into the Telegram message as the model generates it — the same live-typing feel as ChatGPT, done with throttled `editMessageText` calls. No polling, no queues, no servers to babysit.
 
